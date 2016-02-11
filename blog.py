@@ -43,7 +43,7 @@ class BlogHandler(webapp2.RequestHandler):
     # sets a cookie whose name is name and value is val
     def set_secure_cookie(self, name, val):
         cookie_val = make_secure_val(val)
-        # expire time not set so it expires when 
+        # expire time not set so it expires when
         # when you close the browser.
         # set the cookie on Path / so we can delete on same path
         self.response.headers.add_header(
@@ -60,13 +60,13 @@ class BlogHandler(webapp2.RequestHandler):
         self.set_secure_cookie('user_id', str(user.key().id()))
 
     # delete the cookie
-    # sets the user cookie if to nothing -> user_id=; and we keep the same Path,  
+    # sets the user cookie if to nothing -> user_id=; and we keep the same Path,
     # hence we are overriding the same cookie
     def logout(self):
         self.response.headers.add_header('Set-Cookie', 'user_id=; Path=/')
 
     # checks to see if the user is logged in or not throughout the blog
-    # checks the cookie 
+    # checks the cookie
     def initialize(self, *a, **kw):
         webapp2.RequestHandler.initialize(self, *a, **kw)
         # check if cookie 'user_id' exists and if yes, store in
@@ -101,7 +101,7 @@ def valid_pw(name, password, h):
     salt = h.split(',')[0]
     return h == make_pw_hash(name, password, salt)
 
-# creates the ancestor element to store all our users 
+# creates the ancestor element to store all our users
 # in our db
 def users_key(group = 'default'):
     return db.Key.from_path('users', group)
@@ -266,10 +266,21 @@ class Post(db.Model):
         u = cls.all().filter('name =', name).get()
         return u
 
-
     def render(self):
         self._render_text = self.content.replace('\n', '<br>')
         return render_str("post.html", p = self)
+
+    @property
+    def comments(self):
+        return Comment.all().filter( "post = ", str(self.key().id()) )
+
+class Comment(db.Model):
+    comment = db.StringProperty(required=True)
+    post = db.StringProperty(required=True)
+
+    @classmethod
+    def render(self):
+        self.render("comment.html")
 
 class BlogFront(BlogHandler):
     def get(self):
@@ -286,12 +297,14 @@ class PostPage(BlogHandler):
             self.error(404)
             return
 
-        self.render("permalink.html", post = post)
+        # comments = Comment.query(post=post_id).fetch()
+
+        self.render("permalink.html", post=post)
 
 class EditDeleteError(BlogHandler):
     def get(self):
       self.write('You can only edit or delete posts you have created.')
-        
+
 
 
 class NewPost(BlogHandler):
@@ -332,8 +345,8 @@ class UpdatePost(BlogHandler):
         if n1 == n2:
             key = db.Key.from_path('Post', int(post_id), parent=blog_key())
             post = db.get(key)
-            print "post = ", post   
-            error = ""      
+            print "post = ", post
+            error = ""
             self.render("updatepost.html", subject=post.subject, content=post.content, error = error)
         else:
             self.redirect("/editDeleteError")
@@ -352,7 +365,7 @@ class UpdatePost(BlogHandler):
             self.redirect('/blog/%s' % str(p.key().id()))
             pid = p.key().id()
             print "pid = ", str(pid)
- 
+
 class DeletePost(BlogHandler):
     def get(self, post_id):
         key = db.Key.from_path('Post', int(post_id), parent=blog_key())
@@ -367,14 +380,60 @@ class DeletePost(BlogHandler):
         else:
             self.redirect("/editDeleteError")
 
+class NewComment(BlogHandler):
+    def get(self, post_id):
+        #
+        # Display the new comment page
+        #
+        key = db.Key.from_path('Post', int(post_id), parent=blog_key())
+        post = db.get(key)
+        subject = post.subject
+        self.render("newcomment.html", subject=subject, pkey=key)
+    def post(self, post_id):
+        #
+        # New comment was made
+        #
+        # make sure post_id exists
+        key = db.Key.from_path('Post', int(post_id), parent=blog_key())
+        post = db.get(key)
+        if not post:
+            self.error(404)
+            return
+        # make sure user is signed in
+        if not self.user:
+            self.redirect('login')
+        # create comment
+        comment = self.request.get('comment')
+        if comment:
+            c = Comment(comment=comment, post=post_id, parent=self.user.key())
+            c.put()
+            self.redirect('/blog/%s' % str(post_id))
+        else:
+            error = "please provide a comment!"
+            self.render("permalink.html", post = post, content=content, error=error)
 
-
+class UpdateComment(BlogHandler):
+    def get(self, post_id, comment_id):
+        post = Post.get_by_id( int(post_id), parent=blog_key() )
+        comment = Comment.get_by_id( int(comment_id), parent=self.user.key() )
+        if comment:
+            self.render("updatecomment.html", subject=post.subject, comment=comment.comment)
+        else:
+            self.redirect('/blog/%s' % str(post_id))
+    def post(self, post_id, comment_id):
+        comment = Comment.get_by_id( int(comment_id), parent=self.user.key() )
+        if comment.parent().key().id() == self.user.key().id():
+            comment.comment = self.request.get('comment')
+            comment.put()
+        self.redirect( '/blog/%s' % str(post_id) )
 
 app = webapp2.WSGIApplication([('/', BlogFront),
                                ('/blog/?', BlogFront),
                                ('/blog/([0-9]+)', PostPage),
                                ('/blog/newpost', NewPost),
                                ('/blog/([0-9]+)/updatepost', UpdatePost),
+                               ('/blog/([0-9]+)/newcomment', NewComment),
+                               ('/blog/([0-9]+)/updatecomment/([0-9]+)', UpdateComment),
                                ('/signup', Register),
                                ('/blog/([0-9]+)/deletepost', DeletePost),
                                ('/login', Login),
